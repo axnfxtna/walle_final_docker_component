@@ -1,0 +1,12 @@
+# STT Pipeline Configuration
+
+model:
+  name: "scb10x/typhoon-asr-realtime"
+  device: "auto"
+  language: "th"
+
+recording:
+  silence_threshold: 0.02
+  silence_duration: 3.0
+  max_duration: 30.0
+  sample_rate: 16000

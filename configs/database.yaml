@@ -1,0 +1,119 @@
+# Milvus Configuration
+milvus:
+  alias: default
+  collection_name: student_face_images
+
+# Models
+models:
+  text_embedding:
+    name: sentence-transformers/all-MiniLM-L6-v2
+    dim: 384
+  
+  vision_text_embedding:
+    name: BAAI/BGE-VL-base
+    dim: 512
+
+# MySQL Configuration
+mysql:
+  database: capstone
+
+# Collections
+collections:
+  curriculum:
+    name: curriculum
+    primary_key:
+      name: id
+      auto_id: true
+    fields:
+      - name: doc_name
+        type: varchar
+        max_length: 200
+      - name: text_content
+        type: varchar
+        max_length: 65535
+      - name: embedding
+        type: vector
+        dim: 384
+    index:
+      field: embedding
+      type: IVF_FLAT
+      metric: COSINE
+      nlist: 128
+  
+  uni_info:
+    name: uni_info
+    primary_key:
+      name: id
+      auto_id: true
+    fields:
+      - name: image_embedding
+        type: vector
+        dim: 512
+      - name: doc_embedding
+        type: vector
+        dim: 768
+      - name: file_path
+        type: varchar
+        max_length: 255
+      - name: file_type
+        type: varchar
+        max_length: 50
+      - name: text_content
+        type: varchar
+        max_length: 65535
+    index:
+      field: doc_embedding
+      type: IVF_FLAT
+      metric: COSINE
+      nlist: 128
+  
+  time_table:
+    name: time_table
+    primary_key:
+      name: id
+      auto_id: false
+    fields:
+      - name: embedding
+        type: vector
+        dim: 384
+    index:
+      field: embedding
+      type: IVF_FLAT
+      metric: COSINE
+      nlist: 128
+
+# Routing
+routing:
+  curriculum_keywords:
+    - course
+    - credit
+    - syllabus
+  timetable_keywords:
+    - exam
+    - schedule
+    - class
+  default_collection: uni_info
+
+# Datasets
+datasets:
+  curriculum:
+    # path: /home/ancfhtna/capstone/database/dataset/curriculum
+    path: /app/dataset/curriculum
+  
+  uni_info:
+    # path: /home/ancfhtna/capstone/database/dataset/uni_info
+    path: /app/dataset/uni_info
+  
+  time_table:
+    # path: /home/ancfhtna/capstone/database/dataset/time_table
+    path: /app/dataset/time_table
+  
+  initial_data:
+    # path: /home/ancfhtna/capstone/database/dataset
+    path: /app/dataset
+
+
+# Paths
+paths:
+  # face_image_dir: /home/ancfhtna/capstone/database/dataset/student_face_image
+  face_image_dir: /app/dataset/student_face_image

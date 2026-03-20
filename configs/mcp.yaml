@@ -1,0 +1,6 @@
+# MCP Pipeline Configuration
+
+context:
+  max_history: 10
+  default_student_name: "unknown"
+  default_location: "unknown"

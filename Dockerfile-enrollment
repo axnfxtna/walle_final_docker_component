@@ -1,0 +1,23 @@
+FROM python:3.11.13
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app
+ENV VACHANA_PATH=/app/VachanaTTS
+
+# System deps needed for OpenCV (libgl1) in addition to what setup-docker.sh installs
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+
+# Copy setup script and requirements, then run setup
+COPY setup-docker.sh requirements.txt ./
+RUN bash setup-docker.sh
+
+# Copy app code
+COPY configs /app/configs
+COPY src /app/src
+COPY entrypoints /app/entrypoints
+COPY dataset /app/dataset
+COPY models /app/models
+COPY .env .
+
+CMD ["python", "entrypoints/entry_enrollment.py"]

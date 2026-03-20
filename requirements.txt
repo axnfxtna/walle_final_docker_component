@@ -1,0 +1,47 @@
+# ============================================================
+# Unified requirements for all Wall-E Docker services
+# (database, enrollment, rag, stt, tts)
+# ============================================================
+
+# --- Core ---
+numpy
+pandas
+python-dotenv
+omegaconf
+loguru
+requests
+pyyaml
+
+# --- PyTorch (CUDA build installed via setup-docker.sh; these are fallbacks) ---
+torch
+torchaudio
+
+# --- Transformers / Embeddings ---
+transformers==4.45.2
+sentence-transformers
+huggingface_hub
+
+# --- Database ---
+mysql-connector-python
+pymilvus
+
+# --- PDF / Document processing ---
+PyMuPDF
+Pillow
+openpyxl
+python-docx
+
+# --- Vision / Enrollment (face detection & recognition) ---
+opencv-python
+onnxruntime-gpu
+
+# --- Audio (STT + TTS) ---
+sounddevice
+soundfile
+librosa
+scipy
+
+# --- STT (nemo-toolkit[asr] installed via setup-docker.sh) ---
+
+# --- TTS ---
+pythainlp

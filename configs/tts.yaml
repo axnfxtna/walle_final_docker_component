@@ -1,0 +1,9 @@
+# TTS Pipeline Configuration
+
+model:
+  dir: "/app/VachanaTTS/models"
+  default: "MMS-TTS-THAI-MALEV1"
+
+speaking_rate: 1.0
+
+vachana_path: "/app/VachanaTTS"

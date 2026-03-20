@@ -1,0 +1,251 @@
+version: "3.9"
+
+services:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.18
+    network_mode: "host"
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./volumes/etcd:/etcd
+    command: etcd -advertise-client-urls=http://localhost:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: [ "CMD", "etcdctl", "endpoint", "health" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    network_mode: "host"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ./volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9003" --address ":9002"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9002/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+    image: milvusdb/milvus:v2.4.3
+    container_name: milvus
+    network_mode: "host"
+    environment:
+      ETCD_ENDPOINTS: localhost:2379
+      MINIO_ADDRESS: localhost:9002
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: [ "milvus", "run", "standalone" ]
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - milvus_data:/var/lib/milvus
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    # network_mode: "host"
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    ports:
+      - "3306:3306" # Required for your host script to see 'localhost:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: capstone
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  walle-data:
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
+    image: walle-data
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-database
+    depends_on:
+      - milvus
+      - mysql
+    environment:
+      MILVUS_HOST: localhost
+      MYSQL_HOST: localhost
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+      - ./dataset:/app/dataset
+
+  walle-enrollment:
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
+    stdin_open: true   # equivalent of docker run -i
+    tty: true          # equivalent of docker run -t
+    profiles:
+      - interactive
+    image: walle-enrollment
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-enrollment
+    depends_on:
+      - milvus
+    environment:
+      MILVUS_HOST: localhost
+      CAMERA_URL: http://localhost:8080/video  # via SSH reverse tunnel
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./models:/app/models
+      - ./.env:/app/.env
+      - ./dataset:/app/dataset
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    network_mode: "host"
+    restart: unless-stopped
+    volumes:
+      - ./volumes/ollama:/root/.ollama
+
+  walle-rag:
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
+    stdin_open: true   # equivalent of docker run -i
+    tty: true          # equivalent of docker run -t
+    profiles:
+      - interactive
+    image: walle-rag
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-rag
+    depends_on:
+      - milvus
+      - mysql
+      - ollama
+    environment:
+      MILVUS_HOST: localhost
+      MYSQL_HOST: localhost
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+      - ./dataset:/app/dataset
+      - /home/sarucha3/walle_capstone/server_package/received_events.json:/app/received_events.json:ro
+
+  walle-stt:
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    stdin_open: true   # equivalent of docker run -i
+    tty: true          # equivalent of docker run -t
+    profiles:
+      - interactive
+    image: walle-stt
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-stt
+    group_add:
+      - audio           # allow container user to access /dev/snd
+    environment:
+      STT_MODEL: scb10x/typhoon-asr-realtime
+      STT_DEVICE: auto
+      STT_LANGUAGE: th
+      STT_SILENCE_THRESHOLD: "0.02"
+      STT_SILENCE_DURATION: "3.0"
+      STT_MAX_DURATION: "30.0"
+      STT_SAMPLE_RATE: "16000"
+      # ALSA: tell sounddevice which card to use (0 = first card)
+      ALSA_CARD: "0"
+      PULSE_SERVER: ""
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+      # ALSA config so the container finds the right device
+      - /etc/asound.conf:/etc/asound.conf:ro
+      - /usr/share/alsa:/usr/share/alsa:ro
+    devices:
+      - /dev/snd:/dev/snd   # pass host microphone into container
+
+  walle-tts:
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    stdin_open: true   # equivalent of docker run -i
+    tty: true          # equivalent of docker run -t
+    profiles:
+      - interactive
+    image: walle-tts
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-tts
+    group_add:
+      - audio           # allow container user to access /dev/snd
+    environment:
+      # Point to the mounted local vachanatts folder
+      TTS_MODEL_DIR: /app/VachanaTTS/models
+      TTS_DEFAULT_MODEL: MMS-TTS-THAI-MALEV1
+      TTS_SPEAKING_RATE: "1.0"
+      VACHANA_PATH: /app/VachanaTTS
+      TTS_HTTP_PORT: "5002"      # HTTP /speak endpoint port
+      ALSA_CARD: "0"
+      PULSE_SERVER: ""
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+      # Mount the local vachanatts folder (code + models) from RobotAI
+      - /home/sarucha3/walle_capstone/RobotAI/vachanatts:/app/VachanaTTS
+      - /etc/asound.conf:/etc/asound.conf:ro
+      - /usr/share/alsa:/usr/share/alsa:ro
+    devices:
+      - /dev/snd:/dev/snd   # pass host speaker into container
+
+
+  walle-mcp:
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    stdin_open: true   # equivalent of docker run -i
+    tty: true          # equivalent of docker run -t
+    profiles:
+      - interactive
+    image: walle-mcp
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-mcp
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+
+volumes:
+  mysql_data:
+  milvus_data:

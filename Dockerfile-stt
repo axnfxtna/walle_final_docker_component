@@ -1,0 +1,18 @@
+FROM python:3.11.13
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app
+ENV VACHANA_PATH=/app/VachanaTTS
+
+# Copy setup script and requirements, then run setup
+COPY setup-docker.sh requirements.txt ./
+RUN bash setup-docker.sh
+
+# Copy app code
+COPY configs /app/configs
+COPY src /app/src
+COPY entrypoints /app/entrypoints
+COPY .env .
+
+CMD ["python", "entrypoints/entry_stt.py"]

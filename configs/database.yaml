@@ -82,6 +82,33 @@ collections:
       metric: COSINE
       nlist: 128
 
+  chat_history:
+    name: chat_history
+    primary_key:
+      name: id
+      auto_id: false
+    fields:
+      - name: person
+        type: varchar
+        max_length: 100
+      - name: timestamp
+        type: varchar
+        max_length: 30
+      - name: question
+        type: varchar
+        max_length: 4096
+      - name: answer
+        type: varchar
+        max_length: 8192
+      - name: embedding
+        type: vector
+        dim: 384
+    index:
+      field: embedding
+      type: IVF_FLAT
+      metric: COSINE
+      nlist: 128
+
 # Routing
 routing:
   curriculum_keywords:

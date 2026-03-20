@@ -258,16 +258,89 @@ class RAGQueryPipeline:
     #  Context builder
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_context(self, question: str, route: str) -> str:
+    def _search_milvus_chat_history(
+        self, question: str, person: str, top_k: int = 5
+    ) -> List[Dict]:
+        """
+        Semantic search against the 'chat_history' Milvus collection,
+        optionally filtered to a specific person.
+
+        Returns a list of dicts with keys: person, timestamp, question, answer, score.
+        Returns [] if the collection doesn't exist yet.
+        """
+        col_name = "chat_history"
+        if not utility.has_collection(col_name):
+            return []
+
+        try:
+            col = Collection(col_name)
+            col.load()
+
+            query_vec = self.embedder.encode(
+                question, normalize_embeddings=True
+            ).tolist()
+
+            # Build optional person filter
+            expr = f'person == "{person}"' if person and person != "Guest" else None
+
+            search_params = {
+                "metric_type": "COSINE",
+                "params": {"nprobe": 10},
+            }
+            kwargs = dict(
+                data=[query_vec],
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                output_fields=["person", "timestamp", "question", "answer"],
+            )
+            if expr:
+                kwargs["expr"] = expr
+
+            results = col.search(**kwargs)
+
+            hits = []
+            for hit in results[0]:
+                hits.append({
+                    "score":     hit.score,
+                    "person":    hit.entity.get("person", ""),
+                    "timestamp": hit.entity.get("timestamp", ""),
+                    "question":  hit.entity.get("question", ""),
+                    "answer":    hit.entity.get("answer", ""),
+                })
+            return hits
+        except Exception as e:
+            print(f"⚠️  chat_history Milvus search error: {e}")
+            return []
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Context builder
+    # ─────────────────────────────────────────────────────────────────
+
+    def _build_context(self, question: str, route: str, student_name: str = "Guest") -> str:
         """Retrieve relevant data and format it as a context string."""
         parts = []
 
         if route == "chat_history":
-            parts.append("=== ประวัติการสนทนา ===")
-            if not self.history:
-                parts.append("ไม่มีประวัติการสนทนาในรอบนี้")
+            parts.append("=== ประวัติการสนทนา (จากฐานข้อมูล) ===")
+
+            # 1. Search Milvus for semantically relevant past turns (long-term memory)
+            milvus_hits = self._search_milvus_chat_history(question, person=student_name, top_k=5)
+            if milvus_hits:
+                parts.append(f"[ความทรงจำระยะยาว – {len(milvus_hits)} รายการจาก Milvus]")
+                for i, h in enumerate(milvus_hits, 1):
+                    parts.append(
+                        f"[{i}] ({h['timestamp']}) {h['person']}:\n"
+                        f"  คำถาม: {h['question']}\n"
+                        f"  คำตอบ: {h['answer']}"
+                    )
             else:
-                for idx, (q, a) in enumerate(self.history, 1):
+                parts.append("(ยังไม่มีประวัติการสนทนาใน Milvus สำหรับผู้ใช้นี้)")
+
+            # 2. Also include recent in-session turns (short-term memory)
+            if self.history:
+                parts.append("\n[การสนทนารอบนี้ (ในหน่วยความจำ)]")
+                for idx, (q, a) in enumerate(self.history[-3:], 1):
                     parts.append(f"ครั้งที่ {idx}:\nคำถาม: {q}\nคำตอบ: {a}")
 
         elif route == "mysql_students":
@@ -353,7 +426,7 @@ class RAGQueryPipeline:
         print(f"  ℹ  Route: {route}")
 
         # 2. Retrieve context
-        context = self._build_context(question, route)
+        context = self._build_context(question, route, student_name=student_name)
 
         self.status_message = "🤖 Thinking..."
         print("\n🤖 Processing with LLM...")
@@ -459,6 +532,64 @@ def _save_chat_turn(conn, user_name: str, question: str, answer: str) -> None:
     )
     conn.commit()
     cursor.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  JSON chat-history helper
+# ═══════════════════════════════════════════════════════════════════════
+
+def _save_chat_history_json(
+    person_name: str,
+    question: str,
+    answer: str,
+    base_dir: str = "/app/database/chat_history",
+) -> None:
+    """
+    Append a single Q/A turn to  <base_dir>/chat_<person>.json.
+
+    The file stores a JSON array; each element is a dict with:
+        {"timestamp": "...", "person": "...", "question": "...", "answer": "..."}
+
+    The function is safe to call concurrently because it writes to a temp
+    file and os.replace()-s it atomically.
+    """
+    import json
+    import re
+    import datetime
+
+    # Sanitise person_name -> safe filename token
+    safe_name = re.sub(r"[^\w\-]", "_", person_name).strip("_") or "guest"
+    os.makedirs(base_dir, exist_ok=True)
+    file_path = os.path.join(base_dir, f"chat_{safe_name}.json")
+
+    # Load existing history (if any)
+    history: list = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as fh:
+                history = json.load(fh)
+            if not isinstance(history, list):
+                history = []
+        except (json.JSONDecodeError, IOError):
+            history = []
+
+    # Append new turn
+    history.append({
+        "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "person": person_name,
+        "question": question,
+        "answer": answer,
+    })
+
+    # Atomic write via temp file
+    tmp_path = file_path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(history, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, file_path)
+        print(f"  💾  Chat history saved → {file_path}")
+    except Exception as exc:
+        print(f"  ⚠️  Failed to save JSON chat history: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -613,6 +744,7 @@ def auto_stt_mode(pipeline: RAGQueryPipeline, json_path: str = "/app/received_ev
                                 print(f"\n🤖 Wall-E: {answer}")
                                 print(f"  ℹ  (ใช้เวลา {elapsed:.1f} วินาที)\n")
 
+                                # ── Save to MySQL ────────────────────────────────
                                 if mysql_ok:
                                     try:
                                         _save_chat_turn(
@@ -620,6 +752,17 @@ def auto_stt_mode(pipeline: RAGQueryPipeline, json_path: str = "/app/received_ev
                                         )
                                     except Exception as e:
                                         print(f"  ⚠️  บันทึกประวัติสนทนาล้มเหลว: {e}")
+
+                                # ── Save to JSON file ────────────────────────────
+                                chat_history_dir = os.environ.get(
+                                    "CHAT_HISTORY_DIR", "/app/database/chat_history"
+                                )
+                                try:
+                                    _save_chat_history_json(
+                                        student_name, question, answer, base_dir=chat_history_dir
+                                    )
+                                except Exception as e:
+                                    print(f"  ⚠️  บันทึก JSON ล้มเหลว: {e}")
 
                 except json.JSONDecodeError:
                     # File might be mid-write, ignore and try again next loop

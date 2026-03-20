@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
@@ -71,10 +72,23 @@ def main():
         print("PIPELINE SUMMARY")
         print("="*60)
         print("✅ All pipelines completed successfully")
+
+        # ── Chat History → Milvus Watcher ────────────────────────────────
+        print("\n" + "="*60)
+        print("CHAT HISTORY → MILVUS WATCHER")
+        print("="*60)
+
+        from src.pipelines.chat_history_pipeline import ChatHistoryWatcher
+
+        chat_dir = os.environ.get("CHAT_HISTORY_DIR", "/app/database/chat_history")
+        watcher = ChatHistoryWatcher(chat_dir=chat_dir)
+
+        # Block forever — container stays alive to keep watching
+        watcher.run_forever()
         
     except KeyboardInterrupt:
         print("\n\n⚠️  interrupted by user")
-        sys.exit(1)
+        sys.exit(0)
     except Exception as e:
         print(f"\n\n❌ Fatal error: {e}")
         import traceback

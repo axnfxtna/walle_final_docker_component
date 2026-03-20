@@ -73,7 +73,7 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 120s
     image: walle-data
-    restart: "no"
+    restart: unless-stopped
     network_mode: "host"
     build:
       context: .
@@ -84,12 +84,14 @@ services:
     environment:
       MILVUS_HOST: localhost
       MYSQL_HOST: localhost
+      CHAT_HISTORY_DIR: /app/database/chat_history
     volumes:
       - ./src:/app/src
       - ./entrypoints:/app/entrypoints
       - ./configs:/app/configs
       - ./.env:/app/.env
       - ./dataset:/app/dataset
+      - ./database/chat_history:/app/database/chat_history
 
   walle-enrollment:
     stop_signal: SIGTERM
@@ -151,7 +153,8 @@ services:
       - ./configs:/app/configs
       - ./.env:/app/.env
       - ./dataset:/app/dataset
-      - /home/sarucha3/walle_capstone/server_package/received_events.json:/app/received_events.json:ro
+      - /home/sarucha3/walle_capstone/received_events.json:/app/received_events.json:ro
+      - ./database/chat_history:/app/database/chat_history
 
   walle-stt:
     stop_signal: SIGTERM

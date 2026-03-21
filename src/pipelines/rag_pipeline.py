@@ -25,6 +25,7 @@ from src.utils_rag import (
     build_dynamic_system_prompt,
 )
 from src.pipelines.mcp_pipeline import ContextBuilder
+from src.utils_thaireader import write_rag_answer
 
 # OllamaClient lives in the RobotAI sub-project
 _ROBOTAI_DIR = os.path.join(
@@ -763,6 +764,20 @@ def auto_stt_mode(pipeline: RAGQueryPipeline, json_path: str = "/app/received_ev
                                     )
                                 except Exception as e:
                                     print(f"  ⚠️  บันทึก JSON ล้มเหลว: {e}")
+
+                                # ── Write to Thai Reader bridge file ─────────────
+                                rag_answers_path = os.environ.get(
+                                    "RAG_ANSWERS_PATH", "/app/database/rag_answers.json"
+                                )
+                                try:
+                                    write_rag_answer(
+                                        rag_answers_path,
+                                        person=student_name,
+                                        question=question,
+                                        answer=answer,
+                                    )
+                                except Exception as e:
+                                    print(f"  ⚠️  บันทึก rag_answers.json ล้มเหลว: {e}")
 
                 except json.JSONDecodeError:
                     # File might be mid-write, ignore and try again next loop

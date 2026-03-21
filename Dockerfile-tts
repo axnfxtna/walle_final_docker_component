@@ -3,11 +3,14 @@ FROM python:3.11.13
 WORKDIR /app
 
 ENV PYTHONPATH=/app
-ENV VACHANA_PATH=/app/VachanaTTS
+ENV KHANOMTAN_PATH=/app/models/KhanomTan-TTS-v1.0
+# HuggingFace cache lives inside the mounted models volume so weights
+# persist across image rebuilds and are not re-downloaded every time.
+ENV HF_HOME=/app/models/hf_cache
 
-# Copy setup script and requirements, then run setup
-COPY setup-docker.sh requirements.txt ./
-RUN bash setup-docker.sh
+# Copy TTS-specific setup script and requirements, then run setup
+COPY setup-tts.sh requirements.txt ./
+RUN bash setup-tts.sh
 
 # Copy app code
 COPY configs /app/configs

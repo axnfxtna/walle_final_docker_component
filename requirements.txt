@@ -44,4 +44,7 @@ scipy
 # --- STT (nemo-toolkit[asr] installed via setup-docker.sh) ---
 
 # --- TTS ---
+# pythainlp: Thai NLP utilities used by clean_thai_text()
 pythainlp
+# pythaitts and TTS (Coqui) are installed by setup-tts.sh with a specific
+# pandas pre-pin to avoid a source-build failure on Python 3.11.

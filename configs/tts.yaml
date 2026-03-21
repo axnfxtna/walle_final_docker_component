@@ -1,9 +1,8 @@
 # TTS Pipeline Configuration
 
 model:
-  dir: "/app/VachanaTTS/models"
-  default: "MMS-TTS-THAI-MALEV1"
+  name: "wannaphong/KhanomTan-TTS-v1.0"
+  speaker: "Tsyncone"
+  language: "th-th"
 
 speaking_rate: 1.0
-
-vachana_path: "/app/VachanaTTS"

@@ -19,6 +19,7 @@ import sys
 import os
 import json
 import threading
+import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Ensure project root is on Python path
@@ -33,7 +34,8 @@ from src.pipelines.tts_pipeline import TTSPipeline
 _pipeline: TTSPipeline | None = None
 _speak_lock = threading.Lock()   # prevent overlapping playback
 
-TTS_HTTP_PORT = int(os.getenv("TTS_HTTP_PORT", "5002"))
+TTS_HTTP_PORT   = int(os.getenv("TTS_HTTP_PORT",   "5002"))
+TTS_OUTPUT_DIR  = os.getenv("TTS_OUTPUT_DIR", "/app/database/tts_output")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -86,11 +88,15 @@ class TTSHandler(BaseHTTPRequestHandler):
 
         # Speak (serialised so we don't overlap)
         try:
+            os.makedirs(TTS_OUTPUT_DIR, exist_ok=True)
+            ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            save_path = os.path.join(TTS_OUTPUT_DIR, f"tts_{ts}.wav")
+
             with _speak_lock:
                 print(f"🔊 [HTTP] Speaking: {text[:60]}...")
-                _pipeline.speak(text)
-                print("✅ [HTTP] Done")
-            self._send(200, json.dumps({"ok": True, "text": text}))
+                saved = _pipeline.speak(text, save_path=save_path)
+                print(f"✅ [HTTP] Done  →  {saved}")
+            self._send(200, json.dumps({"ok": True, "text": text, "wav": saved}))
         except Exception as e:
             print(f"❌ [HTTP] Error: {e}")
             self._send(500, json.dumps({"error": str(e)}))
@@ -118,13 +124,13 @@ def main():
     cfg = load_config()
     print("✅ Configuration loaded")
 
-    model_dir     = os.getenv("TTS_MODEL_DIR",      cfg.model.dir)
-    default_model = os.getenv("TTS_DEFAULT_MODEL",  cfg.model.default)
+    speaker       = os.getenv("TTS_SPEAKER",       cfg.model.speaker)
+    language      = os.getenv("TTS_LANGUAGE",      cfg.model.language)
     speaking_rate = float(os.getenv("TTS_SPEAKING_RATE", cfg.speaking_rate))
 
     _pipeline = TTSPipeline(
-        model_dir=model_dir,
-        default_model=default_model,
+        speaker=speaker,
+        language=language,
         speaking_rate=speaking_rate,
     )
 

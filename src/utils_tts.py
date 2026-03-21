@@ -96,7 +96,7 @@ def cleanup(path: Optional[str]) -> None:
 
 def clean_thai_text(text: str) -> str:
     """
-    Lightweight Thai text cleaner compatible with VachanaTTS.
+    Lightweight Thai text cleaner compatible with KhanomTan TTS.
     Falls back to pythainlp if available, otherwise strips extra spaces.
     """
     try:

@@ -147,6 +147,7 @@ services:
     environment:
       MILVUS_HOST: localhost
       MYSQL_HOST: localhost
+      RAG_ANSWERS_PATH: /app/database/rag_answers.json
     volumes:
       - ./src:/app/src
       - ./entrypoints:/app/entrypoints
@@ -155,6 +156,7 @@ services:
       - ./dataset:/app/dataset
       - /home/sarucha3/walle_capstone/received_events.json:/app/received_events.json:ro
       - ./database/chat_history:/app/database/chat_history
+      - ./database:/app/database
 
   walle-stt:
     stop_signal: SIGTERM
@@ -209,12 +211,15 @@ services:
     group_add:
       - audio           # allow container user to access /dev/snd
     environment:
-      # Point to the mounted local vachanatts folder
-      TTS_MODEL_DIR: /app/VachanaTTS/models
-      TTS_DEFAULT_MODEL: MMS-TTS-THAI-MALEV1
+      TTS_SPEAKER: "Tsyncone"
+      TTS_LANGUAGE: "th-th"
       TTS_SPEAKING_RATE: "1.0"
-      VACHANA_PATH: /app/VachanaTTS
-      TTS_HTTP_PORT: "5002"      # HTTP /speak endpoint port
+      TTS_HTTP_PORT: "5002"
+      TTS_OUTPUT_DIR: /app/database/tts_output
+      KHANOMTAN_PATH: /app/models/KhanomTan-TTS-v1.0
+      # HF_HOME points inside the mounted models volume so KhanomTan weights
+      # are cached on the host and survive container restarts/rebuilds.
+      HF_HOME: /app/models/hf_cache
       ALSA_CARD: "0"
       PULSE_SERVER: ""
     volumes:
@@ -222,8 +227,8 @@ services:
       - ./entrypoints:/app/entrypoints
       - ./configs:/app/configs
       - ./.env:/app/.env
-      # Mount the local vachanatts folder (code + models) from RobotAI
-      - /home/sarucha3/walle_capstone/RobotAI/vachanatts:/app/VachanaTTS
+      - ./database/tts_output:/app/database/tts_output
+      - ./models:/app/models   # KhanomTan-TTS-v1.0 clone + HuggingFace cache
       - /etc/asound.conf:/etc/asound.conf:ro
       - /usr/share/alsa:/usr/share/alsa:ro
     devices:
@@ -248,6 +253,31 @@ services:
       - ./entrypoints:/app/entrypoints
       - ./configs:/app/configs
       - ./.env:/app/.env
+
+  walle-thaireader:
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    stdin_open: true
+    tty: true
+    profiles:
+      - interactive
+    image: walle-thaireader
+    restart: "no"
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: Dockerfile-thaireader
+    environment:
+      CHAT_HISTORY_DIR: /app/database/chat_history
+      RAG_ANSWERS_PATH: /app/database/rag_answers.json
+      POLL_INTERVAL: "1.0"
+      TTS_HTTP_URL: "http://localhost:5002"
+    volumes:
+      - ./src:/app/src
+      - ./entrypoints:/app/entrypoints
+      - ./configs:/app/configs
+      - ./.env:/app/.env
+      - ./database:/app/database
 
 volumes:
   mysql_data:

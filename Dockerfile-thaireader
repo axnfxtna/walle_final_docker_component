@@ -1,0 +1,16 @@
+FROM python:3.11.13
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app
+
+# Only the lightweight deps are needed (pythainlp + project base)
+RUN pip install --no-cache-dir pythainlp python-crfsuite requests
+
+# Copy app code
+COPY configs /app/configs
+COPY src /app/src
+COPY entrypoints /app/entrypoints
+COPY .env .
+
+CMD ["python", "entrypoints/entry_thaireader.py"]

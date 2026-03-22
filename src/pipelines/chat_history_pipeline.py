@@ -28,9 +28,9 @@ from sentence_transformers import SentenceTransformer
 from src.utils_database import connect_milvus
 
 # ─────────────────────────────────────────────────────────────────
-_EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+_EMB_MODEL = "BAAI/bge-m3"
 _COLLECTION = "chat_history"
-_EMB_DIM = 384
+_EMB_DIM = 1024
 _POLL_INTERVAL = 10          # seconds between folder scans
 _MAX_QUESTION_LEN = 4096
 _MAX_ANSWER_LEN = 8192

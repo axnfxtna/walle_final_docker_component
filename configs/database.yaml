@@ -6,8 +6,8 @@ milvus:
 # Models
 models:
   text_embedding:
-    name: sentence-transformers/all-MiniLM-L6-v2
-    dim: 384
+    name: BAAI/bge-m3
+    dim: 1024
   
   vision_text_embedding:
     name: BAAI/BGE-VL-base
@@ -33,13 +33,13 @@ collections:
         max_length: 65535
       - name: embedding
         type: vector
-        dim: 384
+        dim: 1024
     index:
       field: embedding
       type: IVF_FLAT
       metric: COSINE
       nlist: 128
-  
+
   uni_info:
     name: uni_info
     primary_key:
@@ -51,7 +51,7 @@ collections:
         dim: 512
       - name: doc_embedding
         type: vector
-        dim: 768
+        dim: 1024
       - name: file_path
         type: varchar
         max_length: 255
@@ -75,7 +75,7 @@ collections:
     fields:
       - name: embedding
         type: vector
-        dim: 384
+        dim: 1024
     index:
       field: embedding
       type: IVF_FLAT
@@ -102,7 +102,7 @@ collections:
         max_length: 8192
       - name: embedding
         type: vector
-        dim: 384
+        dim: 1024
     index:
       field: embedding
       type: IVF_FLAT

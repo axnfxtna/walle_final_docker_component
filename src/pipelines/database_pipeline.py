@@ -318,8 +318,8 @@ class RAGIngestionPipeline:
             
             encoder = Encoder(self.cfg.models.vision_text_embedding.name)
             text_model = SentenceTransformer(self.cfg.models.text_embedding.name)
-            text_emb_dim = self.cfg.models.text_embedding.dim  # 384
-            doc_emb_dim = 768  # target dim for doc_embedding field
+            text_emb_dim = self.cfg.models.text_embedding.dim
+            doc_emb_dim = self.cfg.models.text_embedding.dim
             
             record_count = 0
             batch_data = []

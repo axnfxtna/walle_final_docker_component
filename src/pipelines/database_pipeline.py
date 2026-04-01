@@ -3,11 +3,95 @@ Database preparation pipelines for RAG ingestion and MySQL setup.
 """
 import os
 import sys
+import re
 import uuid
 import fitz
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pymilvus import Collection, utility, CollectionSchema, FieldSchema, DataType
+
+# ── Timetable helpers (structured per-day/time ingestion) ─────────────────────
+_DAY_TH = {
+    "monday":    "จันทร์",
+    "tuesday":   "อังคาร",
+    "wednesday": "พุธ",
+    "thursday":  "พฤหัสบดี",
+    "friday":    "ศุกร์",
+    "saturday":  "เสาร์",
+    "sunday":    "อาทิตย์",
+}
+_SKIP_CELLS = {"gened", "break", "nan", "-", ""}
+_TIME_PATTERN = re.compile(r"^\d{1,2}[\.:]\d{2}\s*[-–]\s*\d{1,2}[\.:]\d{2}")
+
+
+def _timetable_label(filename: str) -> str:
+    """'Schedule_RAI 1-67.xlsx' → 'RAI 1 รุ่น 67'"""
+    name = os.path.splitext(filename)[0]
+    name = re.sub(r"^Schedule_", "", name).strip()
+    name = re.sub(r"(\d)\s*-\s*(\d)", r"\1 รุ่น \2", name)
+    return name
+
+
+def _cell_text(val) -> str:
+    """Normalise a cell value to a clean string, or '' if it should be skipped."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    text = str(val).strip().replace("\n", " ").replace("\r", " ")
+    text = re.sub(r" {2,}", " ", text)
+    if text.lower() in _SKIP_CELLS:
+        return ""
+    return text
+
+
+def _parse_timetable_excel(path: str, label: str) -> list:
+    """
+    Parse one timetable xlsx into structured Thai sentences (one per day+time slot).
+    Returns list of strings like:
+      "ตาราง RAI 1 รุ่น 67 วันจันทร์ เวลา 8.00-8.30 วิชา Drawing (Lec)"
+    """
+    df = pd.read_excel(path, header=None)
+    sentences = []
+
+    if df.shape[0] < 3 or df.shape[1] < 2:
+        print(f"  ⚠  {os.path.basename(path)}: too small, skipping")
+        return sentences
+
+    # Find the row where col 0 == "Time"
+    header_row = None
+    for r in range(min(5, df.shape[0])):
+        if _cell_text(df.iloc[r, 0]).lower() == "time":
+            header_row = r
+            break
+
+    if header_row is None:
+        print(f"  ⚠  {os.path.basename(path)}: no 'Time' header found — skipping")
+        return sentences
+
+    # Build col_index → Thai day name
+    col_day = {}
+    current_day = None
+    for col_idx in range(1, df.shape[1]):
+        val = _cell_text(df.iloc[header_row, col_idx])
+        if val:
+            current_day = _DAY_TH.get(val.lower(), val)
+        if current_day:
+            col_day[col_idx] = current_day
+
+    # Data rows start 2 rows after the header (skip section sub-header row)
+    for row_idx in range(header_row + 2, df.shape[0]):
+        time_val = _cell_text(df.iloc[row_idx, 0])
+        if not time_val or not _TIME_PATTERN.match(time_val):
+            continue
+        for col_idx in range(1, df.shape[1]):
+            day = col_day.get(col_idx)
+            if not day:
+                continue
+            cell = _cell_text(df.iloc[row_idx, col_idx])
+            if not cell:
+                continue
+            sentences.append(f"ตาราง {label} วัน{day} เวลา {time_val} วิชา {cell}")
+
+    return sentences
 
 from src.utils_database import (
     load_config,
@@ -389,180 +473,128 @@ class RAGIngestionPipeline:
             raise
     
     def ingest_time_table(self):
-        """Ingest timetable Excel files into Milvus and MySQL."""
+        """Ingest timetable Excel files into Milvus and MySQL.
+
+        Uses structured per-(day, time_slot) sentences so that queries like
+        "วันจันทร์" correctly retrieve only Monday entries.
+        """
         try:
             dataset = self.cfg.datasets.time_table.path
             if not os.path.exists(dataset):
                 print(f"⚠️  Warning: Directory {dataset} does not exist")
                 return
-            
+
             collection = build_collection(self.cfg, "time_table")
-            
-            # Check if collection already has data
+
+            # ── Data consistency check ────────────────────────────────────────
             existing_count = collection.num_entities
             if existing_count > 0:
                 print(f"ℹ️  Collection 'time_table' already contains {existing_count} records")
-                
-                # Data consistency check
                 print("   Checking data consistency...")
                 try:
-                    # Check MySQL data vs Excel files
                     db_check = connect_mysql()
                     cursor_check = db_check.cursor()
                     cursor_check.execute("SELECT row_text FROM ExcelTimetableData")
                     existing_rows = set(r[0] for r in cursor_check.fetchall())
                     db_check.close()
-                    
+
+                    # Generate the same structured sentences from disk
                     local_rows = set()
-                    for filename in os.listdir(dataset):
+                    for filename in sorted(os.listdir(dataset)):
                         if filename.endswith(".xlsx"):
-                            df = pd.read_excel(os.path.join(dataset, filename))
-                            for _, row in df.iterrows():
-                                row_values = []
-                                for val in row.values:
-                                    if pd.isna(val) or val is None: continue
-                                    str_val = str(val).strip()
-                                    if str_val and str_val.lower() != 'nan':
-                                        row_values.append(str_val)
-                                if row_values:
-                                    text = " ".join(row_values)
-                                    if len(text.strip()) >= 3:
-                                        local_rows.add(text)
-                    
+                            label = _timetable_label(filename)
+                            for s in _parse_timetable_excel(
+                                os.path.join(dataset, filename), label
+                            ):
+                                local_rows.add(s)
+
                     if existing_rows == local_rows:
                         print("✅ Data matches exactly. Skipping ingestion.")
                         return
                     else:
-                        print(f"⚠️  Data mismatch (DB: {len(existing_rows)}, Local: {len(local_rows)})")
+                        print(
+                            f"⚠️  Data mismatch "
+                            f"(DB: {len(existing_rows)}, Local: {len(local_rows)})"
+                        )
                         print("   Dropping and recreating collection...")
                         utility.drop_collection("time_table")
                         collection = build_collection(self.cfg, "time_table")
-                        
-                        # Also clear MySQL data
+
                         print("   Clearing MySQL timetable data...")
-                        db = connect_mysql()
-                        cursor = db.cursor()
-                        cursor.execute("DELETE FROM ExcelTimetableData")
-                        db.commit()
-                        db.close()
-                        
+                        db_clear = connect_mysql()
+                        cursor_clear = db_clear.cursor()
+                        cursor_clear.execute("DELETE FROM ExcelTimetableData")
+                        cursor_clear.execute(
+                            "ALTER TABLE ExcelTimetableData AUTO_INCREMENT = 1"
+                        )
+                        db_clear.commit()
+                        db_clear.close()
+
                 except Exception as e:
-                     print(f"⚠️  Error checking consistency, defaulting to re-ingestion: {e}")
-                     print("   Dropping and recreating collection...")
-                     utility.drop_collection("time_table")
-                     collection = build_collection(self.cfg, "time_table")
-                     
-                     db = connect_mysql()
-                     cursor = db.cursor()
-                     cursor.execute("DELETE FROM ExcelTimetableData")
-                     db.commit()
-                     db.close()
-            
+                    print(f"⚠️  Consistency check failed, forcing re-ingestion: {e}")
+                    utility.drop_collection("time_table")
+                    collection = build_collection(self.cfg, "time_table")
+                    db_clear = connect_mysql()
+                    cursor_clear = db_clear.cursor()
+                    cursor_clear.execute("DELETE FROM ExcelTimetableData")
+                    cursor_clear.execute(
+                        "ALTER TABLE ExcelTimetableData AUTO_INCREMENT = 1"
+                    )
+                    db_clear.commit()
+                    db_clear.close()
+
             model = SentenceTransformer(self.cfg.models.text_embedding.name)
-            
-            # Create timetable table if it doesn't exist
+
             db = connect_mysql()
             cursor = db.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ExcelTimetableData (
-                    id INT PRIMARY KEY AUTO_INCREMENT,
-                    row_text TEXT NOT NULL
+
+            # ── Parse all Excel files into structured sentences ───────────────
+            print("   Parsing Excel files...")
+            all_sentences = []
+            for filename in sorted(os.listdir(dataset)):
+                if not filename.endswith(".xlsx"):
+                    continue
+                label = _timetable_label(filename)
+                sentences = _parse_timetable_excel(
+                    os.path.join(dataset, filename), label
                 )
-            """)
-            db.commit()
-            
-            row_count = 0
-            skipped_count = 0
-            batch_ids = []
-            batch_embeddings = []
-            
-            for filename in os.listdir(dataset):
-                if filename.endswith(".xlsx"):
-                    print(f"   Processing Excel file: {filename}")
-                    df = pd.read_excel(os.path.join(dataset, filename))
-                    
-                    for idx, row in df.iterrows():
-                        # Convert row to text, handling NaN values
-                        row_values = []
-                        for val in row.values:
-                            # Skip NaN/None values
-                            if pd.isna(val) or val is None:
-                                continue
-                            # Convert to string and strip whitespace
-                            str_val = str(val).strip()
-                            if str_val and str_val.lower() != 'nan':
-                                row_values.append(str_val)
-                        
-                        # Skip rows that are empty or only contain NaN
-                        if not row_values:
-                            skipped_count += 1
-                            continue
-                        
-                        text = " ".join(row_values)
-                        
-                        # Skip if text is too short (likely header or empty)
-                        if len(text.strip()) < 3:
-                            skipped_count += 1
-                            continue
-                        
-                        try:
-                            # Insert into MySQL with INSERT IGNORE to skip duplicates
-                            cursor.execute(
-                                "INSERT IGNORE INTO ExcelTimetableData (row_text) VALUES (%s)",
-                                (text,)
-                            )
-                            db.commit()
-                            
-                            row_id = None
-                            
-                            # Check if insert was successful
-                            if cursor.rowcount > 0:
-                                row_id = int(cursor.lastrowid)
-                            else:
-                                # Row exists, fetch the existing ID
-                                cursor.execute(
-                                    "SELECT id FROM ExcelTimetableData WHERE row_text = %s LIMIT 1",
-                                    (text,)
-                                )
-                                result = cursor.fetchone()
-                                if result:
-                                    row_id = result[0]
-                            
-                            if row_id is not None:
-                                # Encode text
-                                emb = model.encode(text).tolist()
-                                
-                                # Batch the data
-                                batch_ids.append(str(row_id))
-                                batch_embeddings.append(emb)
-                                row_count += 1
-                                
-                                # Insert in batches of 100 for efficiency
-                                if len(batch_ids) >= 100:
-                                    collection.insert([batch_ids, batch_embeddings])
-                                    batch_ids = []
-                                    batch_embeddings = []
-                            else:
-                                print(f"   ⚠️  Could not retrieve ID for row {idx}")
-                                skipped_count += 1
-                        
-                        except Exception as row_error:
-                            # Log the error but continue processing
-                            print(f"   ⚠️  Skipping row {idx}: {str(row_error)[:100]}")
-                            skipped_count += 1
-                            continue
-            
-            # Insert remaining records
-            if batch_ids:
-                collection.insert([batch_ids, batch_embeddings])
-            
+                print(f"   {filename} ({label}): {len(sentences)} records")
+                all_sentences.extend(sentences)
+
+            print(f"   Total structured records: {len(all_sentences)}")
+
+            # ── Embed + insert in batches ─────────────────────────────────────
+            BATCH_SIZE = 50
+            inserted = 0
+            for i in range(0, len(all_sentences), BATCH_SIZE):
+                batch = all_sentences[i : i + BATCH_SIZE]
+
+                # Insert into MySQL, collect auto-increment IDs
+                row_ids = []
+                for text in batch:
+                    cursor.execute(
+                        "INSERT INTO ExcelTimetableData (row_text) VALUES (%s)",
+                        (text,),
+                    )
+                    row_ids.append(str(cursor.lastrowid))
+                db.commit()
+
+                # Embed batch (normalize for cosine similarity)
+                embeddings = model.encode(
+                    batch, normalize_embeddings=True
+                ).tolist()
+
+                collection.insert([row_ids, embeddings])
+                inserted += len(batch)
+                print(f"   Inserted {inserted}/{len(all_sentences)}", end="\r")
+
             collection.flush()
             db.close()
-            
-            print(f"✅ Time table ingestion completed ({row_count} rows inserted, {skipped_count} rows skipped)")
+
+            print(f"\n✅ Time table ingestion completed ({inserted} structured records)")
         except Exception as e:
             print(f"❌ Error in time table ingestion: {e}")
-            if 'db' in locals():
+            if "db" in locals():
                 db.close()
             raise
     

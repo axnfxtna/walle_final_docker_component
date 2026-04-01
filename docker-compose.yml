@@ -120,13 +120,13 @@ services:
   #     - ./.env:/app/.env
   #     - ./dataset:/app/dataset
 
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: ollama
-  #   network_mode: "host"
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./volumes/ollama:/root/.ollama
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    network_mode: "host"
+    restart: unless-stopped
+    volumes:
+      - ./volumes/ollama:/root/.ollama
 
   # walle-rag:
   #   stop_signal: SIGTERM

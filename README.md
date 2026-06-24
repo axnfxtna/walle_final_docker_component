@@ -35,4 +35,4 @@ All collections use **BAAI/bge-m3** (1024-dim) text embeddings, IVF_FLAT index, 
 | `Students` | `dataset/initial_data.py` → `STUDENTS` | Student profiles: `student_id`, `first_name`, `last_name`, `nick_name`, `student_email`, `enrollment_year`. |
 | `Face_Recognition_Data` | `dataset/student_face_image/*.jpg` | Face image paths and encodings per student: `face_id`, `student_id`, `face_image_path`, `face_encoding`. |
 | `ExcelTimetableData` | `dataset/time_table/*.xlsx` | Raw timetable sentences mirroring Milvus `time_table` collection. `row_id` (auto-increment) = Milvus primary key for JOIN lookups. |
-# walle_final_docker_component
+
